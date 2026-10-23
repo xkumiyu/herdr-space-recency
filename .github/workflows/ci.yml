@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ['3.11', '3.14']
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Run unit tests
+        run: python3 -m unittest -v
+      - name: Install Herdr 0.9.5
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/herdr"
+          gh release download v0.9.5 --repo herdrdev/herdr --pattern herdr-linux-x86_64 --dir "$RUNNER_TEMP/herdr"
+          echo "14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d  $RUNNER_TEMP/herdr/herdr-linux-x86_64" | sha256sum --check
+          mv "$RUNNER_TEMP/herdr/herdr-linux-x86_64" "$RUNNER_TEMP/herdr/herdr"
+          chmod +x "$RUNNER_TEMP/herdr/herdr"
+          echo "$RUNNER_TEMP/herdr" >> "$GITHUB_PATH"
+      - name: Run Herdr smoke test
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
+        run: python3 smoke.py

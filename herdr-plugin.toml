@@ -1,0 +1,33 @@
+id = "herdr-space-recency"
+name = "Space Recency"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+description = "Fade Space names by time since last focus, without changing Agents or themes."
+platforms = ["linux", "macos"]
+
+[[startup]]
+command = ["python3", "plugin.py", "start"]
+
+[[actions]]
+id = "setup"
+title = "Space Recency: set up sidebar and start"
+contexts = ["global"]
+command = ["python3", "plugin.py", "setup"]
+
+[[actions]]
+id = "start"
+title = "Space Recency: start"
+contexts = ["global"]
+command = ["python3", "plugin.py", "start"]
+
+[[actions]]
+id = "stop"
+title = "Space Recency: stop and show normal names"
+contexts = ["global"]
+command = ["python3", "plugin.py", "stop"]
+
+[[actions]]
+id = "status"
+title = "Space Recency: status"
+contexts = ["global"]
+command = ["python3", "plugin.py", "status"]
