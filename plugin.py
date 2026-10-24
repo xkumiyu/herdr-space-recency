@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from recency import Settings, TOKENS, Tracker, load_state, save_state
-from presentation import workspace_branches, sync_sidebar, setup_sidebar, write_config
+from presentation import workspace_branches, setup_sidebar, write_config
 
 PLUGIN_ID = "herdr-space-recency"
 SOURCE = "space-recency"
@@ -134,7 +134,6 @@ def run(context):
         deadline = 0
         focused = set()
         retry_seconds = 1
-        applied_colors = None
         try:
             while not context.stop_file.exists():
                 if events is None:
@@ -164,12 +163,6 @@ def run(context):
                             settings = Settings.load(context.config)
                         except ValueError as error:
                             log(f"Keeping previous settings: {error}")
-                        colors = (settings.faded_color, settings.dim_color, settings.branch_color,
-                                  settings.branch_faded_color, settings.branch_dim_color)
-                        if colors != applied_colors:
-                            if sync_sidebar(context.herdr_config, settings):
-                                context.rpc("server.reload_config")
-                                applied_colors = colors
                         workspaces = context.workspaces()
                         now = time.time()
                         reports = tracker.update(workspaces, now, settings)
@@ -253,16 +246,19 @@ def start(context):
 
 
 def setup(context):
-    settings = Settings.load(context.config)
+    Settings.load(context.config)
     path = context.herdr_config.resolve()
     before = path.read_text() if path.exists() else ""
     already_running = context.running()
     installed = None
     try:
         start(context)
-        setup_sidebar(path, settings)
-        installed = path.read_text()
-        context.rpc("server.reload_config")
+        if setup_sidebar(path):
+            installed = path.read_text()
+            context.rpc("server.reload_config")
+        else:
+            print(f"Existing [ui.sidebar.spaces] preserved in {path}; "
+                  "edit its rows/colors there, using sidebar.toml as a token reference.")
     except (OSError, ValueError, KeyError, RuntimeError):
         if not already_running:
             try:

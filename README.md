@@ -1,113 +1,71 @@
 # Herdr Space Recency
 
-Find Spaces you may no longer need by fading their names as time passes since
-last use. Space and branch names fade together; focusing a Space restores its
-normal color.
+Fade Space and branch names by time since last use: normal before 24 hours,
+muted gray after 24 hours, and darker gray after 7 days. Focused Spaces and
+Spaces with working, blocked, or unacknowledged completed agents stay bright.
 
-## How it works
+Tracking starts on first run; history survives restarts. Space names, Git status
+colors, state icons, and the Agents list are preserved. Nothing is renamed or
+closed automatically. Grouped worktrees follow Herdr's branch-based names;
+custom names are respected. The API omits the custom-name flag, so recognizing
+automatic names or a rename to the same text as the automatic label can wait
+for the session save.
 
-| Time since last use | Appearance (defaults) |
-| --- | --- |
-| Less than 24 hours | Normal theme color |
-| 24 hours to less than 7 days | Muted gray |
-| 7 days or more | Darker gray |
+Requires **Herdr 0.9.5+, Python 3.11+, Git, and Linux or macOS**. No extra packages.
 
-The currently focused Space stays at normal brightness. Spaces with agents that
-are working, waiting for input, or showing an unacknowledged completion also
-keep their normal color, so activity remains visible.
+## Install
 
-The plugin preserves Git status colors, state icons, and the Agents list.
-It does not rename or automatically close Spaces. Worktrees grouped under a
-parent project keep Herdr's compact layout without a duplicate branch row.
-
-Tracking begins when the plugin first runs. Usage history is saved across
-plugin and Herdr restarts.
-
-## Requirements
-
-- Herdr 0.9.5 or later
-- Python 3.11 or later
-- Git
-- Linux or macOS
-
-No additional Python packages or build step are required.
-
-## Installation
-
-Run the following commands in a terminal inside Herdr. You do not need to clone
-the repository yourself; Herdr downloads and manages the plugin files.
+Run inside Herdr:
 
 ```sh
 herdr plugin install xkumiyu/herdr-space-recency
 herdr plugin action invoke herdr-space-recency.setup
 ```
 
-The `setup` action starts the plugin, configures the Spaces sidebar, and reloads
-Herdr. No manual configuration editing is needed. Running it again is safe.
-The plugin starts automatically on subsequent Herdr startups.
+Setup starts the plugin and inserts [sidebar.toml](sidebar.toml) only if Spaces
+settings are absent, then reloads Herdr. Existing layouts and colors are kept,
+including previously generated blocks. If needed, adapt your existing rows
+using the template. The plugin starts automatically with Herdr afterward.
 
-Setup replaces an existing `[ui.sidebar.spaces]` table and preserves other
-settings. Before the first replacement, it saves the original configuration
-alongside the file as `config.toml.before-space-recency-setup`. If you use a
-custom Spaces layout, you can restore it from this backup when removing the
-plugin. Nonstandard inline or dotted-key Spaces definitions must first be
-converted to a `[ui.sidebar.spaces]` table.
+Herdr's config defaults to `~/.config/herdr/config.toml`; `HERDR_CONFIG_PATH`
+and `XDG_CONFIG_HOME` are respected. Before insertion into an existing file,
+setup saves `config.toml.before-space-recency-setup` alongside it.
 
-By default, setup edits `~/.config/herdr/config.toml`; it respects
-`HERDR_CONFIG_PATH` and `XDG_CONFIG_HOME`. To configure the sidebar manually
-instead, start the plugin, copy [sidebar.toml](sidebar.toml) into the Herdr
-configuration (replacing any existing Spaces table), then run
-`herdr config check` and `herdr server reload-config`.
+## Configure
 
-## Customize timing and colors
-
-Find the plugin's configuration directory:
+**Timing:** create `config.toml` in the directory printed by:
 
 ```sh
 herdr plugin config-dir herdr-space-recency
 ```
 
-Create a `config.toml` file in that directory. Use any of the following settings;
-omitted settings keep their defaults:
+Defaults (also in [config.example.toml](config.example.toml)):
 
 ```toml
 fade_after_hours = 24
 dim_after_hours = 168
 refresh_seconds = 60
-faded_color = "#A0A0A0"
-dim_color = "#606060"
-branch_color = ""
-branch_faded_color = ""
-branch_dim_color = ""
 ```
 
-- `fade_after_hours`: hours until the first fade.
-- `dim_after_hours`: hours until the darker color applies.
-- `refresh_seconds`: how often to check elapsed time and configuration changes.
-- `faded_color` and `dim_color`: text colors for both Space and branch names.
-  The defaults suit dark backgrounds; choose colors that remain readable with
-  your theme. Normal names use the theme's text color.
-- `branch_color`, `branch_faded_color`, and `branch_dim_color`: optional branch
-  colors for normal, faded, and dim states. Omitted or empty values inherit the
-  corresponding Space color. To distinguish branches with muted blues, for
-  example, set these to `#7F91A8`, `#64748A`, and `#485568` respectively.
+Fractional hours are allowed; require `0 < fade_after_hours < dim_after_hours`
+and `refresh_seconds >= 1`. Timing changes apply on the next refresh; invalid
+settings are logged and the previous valid settings remain active.
 
-For example, set `fade_after_hours = 6` and `dim_after_hours = 72` to fade after
-six hours and dim after three days. Fractional hours are supported. Thresholds
-must satisfy `0 < fade_after_hours < dim_after_hours`, and the refresh interval
-must be at least one second. Colors must use `#RRGGBB` notation.
+**Colors and layout:** edit `[ui.sidebar.spaces]` in **Herdr's config.toml**.
+See [sidebar.toml](sidebar.toml) for the six Space/branch state tokens and default
+colors. The plugin does not write or reload Herdr config during startup or
+periodic updates. After editing Herdr config, run:
 
-Changes take effect on the next refresh without restarting Herdr. Focus changes
-are handled through events. Invalid settings are logged, and the previous valid
-settings remain active.
+```sh
+herdr config check
+herdr server reload-config
+```
 
-Set colors in the plugin configuration rather than editing the sidebar block.
-The plugin regenerates the marked block when colors change or the plugin
-restarts, and reloads Herdr automatically. Other configuration remains untouched.
-Before the first automatic update, it saves a backup alongside the Herdr
-configuration as `config.toml.before-space-recency-colors`.
+**Upgrading:** existing Herdr colors are preserved. The old plugin settings
+`faded_color`, `dim_color`, `branch_color`, `branch_faded_color`, and
+`branch_dim_color` are ignored and can be removed.
 
-## Manage the plugin
+## Start, stop, and troubleshoot
 
 ```sh
 herdr plugin action invoke herdr-space-recency.status
@@ -115,75 +73,44 @@ herdr plugin action invoke herdr-space-recency.stop
 herdr plugin action invoke herdr-space-recency.start
 ```
 
-Run `setup` after installing and `start` after re-enabling the plugin. Duplicate starts
-are prevented automatically. Stopping restores normal colors for existing
-names. To restore Herdr's standard display permanently, follow the removal
-steps below; new Spaces and renames are not tracked while the plugin is stopped.
+Use `start` after re-enabling the plugin; duplicate starts are safe. Normal stop
+restores normal display tokens for existing Spaces, keeping the sidebar layout.
+**Spaces created while stopped have blank names** because no display tokens
+are supplied. Existing tokens can remain, but names and branches stop updating.
+Starting the plugin supplies tokens again; it does not switch the sidebar back
+to Herdr's default layout automatically.
 
-## Remove the plugin
+For blank names after a restart, check `status` and try `start`. The reported
+`state_dir` contains `daemon.log` and `last-used.json`. If startup reports corrupt
+history, move `last-used.json` aside before restarting.
 
-1. Stop it:
+Branch updates can lag in split layouts with different working directories.
+Detached HEAD has no branch name. Run the plugin on each Herdr server; clients
+on one server share history and cannot protect their focus independently.
 
-   ```sh
-   herdr plugin action invoke herdr-space-recency.stop
-   ```
+## Remove
 
-2. Remove the sidebar block, including its marker comments, from your Herdr
-   configuration. Restore your previous `[ui.sidebar.spaces]` table if you had
-   one, using `config.toml.before-space-recency-setup` if needed. Otherwise,
-   removing the block restores Herdr's default layout.
+Stop the plugin, then remove its `[ui.sidebar.spaces]` table from Herdr config. Restore your previous Spaces layout if needed, using an earlier
+`config.toml.before-space-recency-setup` backup. Removing the block without a
+replacement restores Herdr's default layout. Then run:
 
-3. Check, reload, and uninstall:
-
-   ```sh
-   herdr config check
-   herdr server reload-config
-   herdr plugin uninstall herdr-space-recency
-   ```
-
-## Troubleshooting and limitations
-
-- **Existing Spaces do not fade immediately:** the plugin cannot recover usage
-  history from before installation. It measures time since a Space was last
-  viewed, rather than its age since creation.
-- **Branch names update late in some split layouts:** when panes in the first
-  tab use different directories, branch detection relies on Herdr's saved
-  session and may wait for the next session save. Single-pane layouts and
-  first-tab panes sharing a directory use live information. Detached HEAD
-  states show no branch name, matching Herdr.
-- **Names are blank after a restart:** the sidebar needs display data from the
-  running plugin. Check `status` and try `start`. The reported `state_dir`
-  contains `daemon.log` and usage history in `last-used.json`. If needed,
-  restore the standard sidebar using the removal steps above.
-- **Startup reports corrupt history:** move `last-used.json` aside before
-  restarting. The plugin does not overwrite corrupt history automatically.
-- **Remote Spaces:** run the plugin on each Herdr server where you want fading.
-- **Multiple clients:** clients on the same server share history. The plugin
-  cannot independently protect every client's currently viewed Space because
-  Herdr's focus events do not identify clients.
-- **Forced termination:** the last display remains until the plugin starts
-  again. Disabling or unlinking normally stops it within the refresh interval.
+```sh
+herdr config check
+herdr server reload-config
+herdr plugin uninstall herdr-space-recency
+```
 
 ## Development
 
-To run a local checkout, use `herdr plugin link .` from the repository root
-instead of `plugin install`, then follow the remaining installation steps.
-Herdr runs the linked files directly, so keep the checkout in place. Use
-`herdr plugin unlink herdr-space-recency` to unregister it without removing
-the checkout. Unlink a development checkout before installing from GitHub.
-
-Run the checks from the repository root:
+Use `herdr plugin link .` instead of install, then invoke setup. Herdr runs the
+checkout directly; keep it in place. Before installing from GitHub, run
+`herdr plugin unlink herdr-space-recency`.
 
 ```sh
 python3 -m unittest -v
 python3 smoke.py
 ```
 
-The smoke test uses a dedicated Herdr server and temporary configuration. It
-checks fading, branch updates, color changes, focus restoration, renaming,
-persistence, and plugin lifecycle behavior without connecting to your regular
-session.
-
-GitHub Actions runs unit tests on Linux and macOS with Python 3.11 and 3.14,
-plus the smoke test on Linux with Herdr 0.9.5. Dependabot checks GitHub Actions
-dependencies weekly.
+Smoke uses a disposable Herdr session to check setup, config preservation,
+name/branch tokens, fading, focus, persistence, and plugin lifecycle. CI runs
+unit tests on Linux/macOS with Python 3.11/3.14 and smoke on Linux with Herdr 0.9.5.

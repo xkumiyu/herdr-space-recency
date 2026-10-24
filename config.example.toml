@@ -5,12 +5,5 @@ dim_after_hours = 168
 # Check time/config changes every minute. Focus changes update immediately.
 refresh_seconds = 60
 
-# Foregrounds for Space names; branches inherit these by default. #RRGGBB only.
-# Applied automatically to the managed Spaces block; other UI colors stay put.
-faded_color = "#A0A0A0"
-dim_color = "#606060"
-
-# Optional branch overrides: normal, faded, and dim. Empty means inherit.
-branch_color = ""
-branch_faded_color = ""
-branch_dim_color = ""
+# Set Space and branch colors in [ui.sidebar.spaces] in Herdr config.toml.
+# See sidebar.toml for state tokens and default colors.

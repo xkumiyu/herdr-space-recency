@@ -1,63 +1,14 @@
-"""Space-name/branch presentation; only the marked sidebar block is managed."""
+"""Space-name/branch presentation and one-time sidebar installation."""
 
 import os
 import json
-import re
 import subprocess
 import tempfile
 import tomllib
 from pathlib import Path
 
-START = "# >>> herdr-space-recency sidebar"
-END = "# <<< herdr-space-recency sidebar"
-
-
-def render_sidebar(settings):
-    template = Path(__file__).with_name("sidebar.toml").read_text()
-    colors = {
-        "$recency_faded": settings.faded_color,
-        "$recency_stale": settings.dim_color,
-        "$recency_branch_faded": settings.branch_faded_color or settings.faded_color,
-        "$recency_branch_stale": settings.branch_dim_color or settings.dim_color,
-    }
-    rendered = re.sub(r'\{ token = "([^"]+)", fg = "#[0-9A-Fa-f]{6}" \}',
-                      lambda match: f'{{ token = "{match[1]}", fg = "{colors[match[1]]}" }}', template)
-    if settings.branch_color:
-        rendered = rendered.replace('"$recency_branch_fresh"',
-                                    f'{{ token = "$recency_branch_fresh", fg = "{settings.branch_color}" }}')
-    return rendered
-
-
-def sync_sidebar(path, settings):
-    """Return whether this file has our block; write only when colors differ."""
-    path = Path(path).resolve()
-    try:
-        before = path.read_text()
-    except FileNotFoundError:
-        return False
-    tomllib.loads(before)
-    markers = []
-    offset = 0
-    for line in before.splitlines(keepends=True):
-        if line.strip() in (START, END):
-            try:
-                # An unfinished TOML value means this is data, not our marker.
-                tomllib.loads(before[:offset])
-            except ValueError:
-                pass
-            else:
-                markers.append((line.strip(), offset, offset + len(line.rstrip("\r\n"))))
-        offset += len(line)
-    if not markers:
-        return False
-    if [marker[0] for marker in markers] != [START, END]:
-        raise ValueError("Invalid Space Recency sidebar markers; config left unchanged")
-    start, end = markers[0][1], markers[1][2]
-    after = before[:start] + render_sidebar(settings).rstrip("\n") + before[end:]
-    if after == before:
-        return True
-    write_config(path, before, after, ".before-space-recency-colors")
-    return True
+def render_sidebar():
+    return Path(__file__).with_name("sidebar.toml").read_text()
 
 
 def write_config(path, before, after, backup_suffix):
@@ -84,44 +35,23 @@ def write_config(path, before, after, backup_suffix):
             stream.flush()
             os.fsync(stream.fileno())
         if path.exists() != exists or (exists and path.read_text() != before):
-            raise ValueError("Herdr config changed during color update; retrying later")
+            raise ValueError("Herdr config changed during setup; run setup again")
         temporary.replace(path)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
 
 
-def setup_sidebar(path, settings):
-    """Install the managed sidebar, preserving unrelated configuration."""
+def setup_sidebar(path):
+    """Insert defaults only when Spaces settings are absent; return whether inserted."""
     path = Path(path).resolve()
-    if sync_sidebar(path, settings):
-        return
     before = path.read_text() if path.exists() else ""
     parsed = tomllib.loads(before)
-    headers = []
-    offset = 0
-    for line in before.splitlines(keepends=True):
-        if re.fullmatch(r'\s*\[.+\]\s*(?:#.*)?', line.rstrip("\n")):
-            try:
-                # A header-looking line inside a multiline string is data.
-                tomllib.loads(before[:offset])
-                table = tomllib.loads(line)
-            except ValueError:
-                pass
-            else:
-                headers.append((offset, table))
-        offset += len(line)
-    target = {"ui": {"sidebar": {"spaces": {}}}}
-    for index, (begin, table) in enumerate(headers):
-        if table == target:
-            end = headers[index + 1][0] if index + 1 < len(headers) else len(before)
-            after = before[:begin] + render_sidebar(settings) + "\n" + before[end:]
-            break
-    else:
-        if "spaces" in parsed.get("ui", {}).get("sidebar", {}):
-            raise ValueError("Use a [ui.sidebar.spaces] table before running setup; config left unchanged")
-        after = before + ("\n" if before else "") + render_sidebar(settings)
+    if "spaces" in parsed.get("ui", {}).get("sidebar", {}):
+        return False
+    after = before + ("\n" if before else "") + render_sidebar()
     write_config(path, before, after, ".before-space-recency-setup")
+    return True
 
 
 def branch_name(cwd):
@@ -137,17 +67,21 @@ def branch_name(cwd):
 
 
 def workspace_branches(workspaces, session_path, *, tabs=(), panes=()):
+    """Resolve sidebar names and branches without changing workspace identities."""
     # The public API omits root-pane identity. Follow the saved first tab's root
     # CWD, like Herdr; identity_cwd is only the fallback, not updated on cd.
     try:
         saved = json.loads(Path(session_path).read_text())
         cwds = {}
+        custom_names = {workspace["id"]: workspace["custom_name"]
+                        for workspace in saved["workspaces"] if "custom_name" in workspace}
         for workspace in saved["workspaces"]:
             tab = next(iter(workspace.get("tabs", [])), {})
             pane = tab.get("panes", {}).get(str(tab.get("root_pane")), {})
             cwds[workspace["id"]] = pane.get("cwd") or workspace.get("identity_cwd")
     except (FileNotFoundError, ValueError, KeyError, TypeError):
         cwds = {}
+        custom_names = {}
     first_tabs = {}
     for tab in tabs:
         first_tabs.setdefault(tab["workspace_id"], tab["tab_id"])
@@ -169,11 +103,17 @@ def workspace_branches(workspaces, session_path, *, tabs=(), panes=()):
     }
     for workspace in workspaces:
         provenance = workspace.get("worktree") or {}
-        if provenance.get("is_linked_worktree") and provenance.get("repo_key") in parent_repos:
-            result.append({**workspace, "branch": None})
-            continue
+        grouped = provenance.get("is_linked_worktree") and provenance.get("repo_key") in parent_repos
         cwd = cwds.get(workspace["workspace_id"]) or (workspace.get("worktree") or {}).get("checkout_path")
         if cwd not in branches:
             branches[cwd] = branch_name(cwd)
-        result.append({**workspace, "branch": branches[cwd]})
+        branch = branches[cwd]
+        label = workspace["label"]
+        # Confirm saved automatic naming and keep differing live names during save lag.
+        # ponytail: custom-name flags can lag; use a live API flag if Herdr exposes one.
+        if (grouped and workspace["workspace_id"] in custom_names
+                and custom_names[workspace["workspace_id"]] is None
+                and label == Path(provenance["checkout_path"]).name and branch is not None):
+            label = branch.removeprefix("worktree/")
+        result.append({**workspace, "label": label, "branch": None if grouped else branch})
     return result

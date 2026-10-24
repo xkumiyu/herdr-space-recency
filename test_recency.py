@@ -73,17 +73,15 @@ class RecencyTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     Settings.load(path)
 
-    def test_configurable_colors_are_validated(self):
+    def test_legacy_color_keys_are_ignored(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "config.toml"
-            path.write_text('faded_color = "#abcdef"\ndim_color = "#123456"\n')
-            settings = Settings.load(path)
-            self.assertEqual(settings.faded_color, "#abcdef")
-            self.assertEqual(settings.dim_color, "#123456")
-            for bad in ['"red"', '"#xyzxyz"', '"#12345"', 'true', '42']:
-                path.write_text(f"faded_color = {bad}\n")
-                with self.assertRaises(ValueError):
-                    Settings.load(path)
+            path.write_text(
+                'fade_after_hours = 2\ndim_after_hours = 5\n'
+                'faded_color = "red"\ndim_color = 42\nbranch_color = false\n'
+                'branch_faded_color = ["old"]\nbranch_dim_color = ""\n'
+            )
+            self.assertEqual(Settings.load(path), Settings(fade_after_hours=2, dim_after_hours=5))
 
     def test_branch_follows_name_tier_and_clears_when_missing(self):
         workspace = self.workspace()

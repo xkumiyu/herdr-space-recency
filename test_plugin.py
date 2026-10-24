@@ -101,31 +101,44 @@ class TransportTests(unittest.TestCase):
         self.assertNotEqual(self.context.timestamps, other.timestamps)
         self.assertEqual(self.context.timestamps, Context().timestamps)
 
-    def test_colors_retry_when_sidebar_is_added_after_daemon_start(self):
+    def test_runtime_never_writes_herdr_config_or_reloads_with_legacy_colors(self):
+        from presentation import render_sidebar
         self.context.config.parent.mkdir(parents=True)
-        self.context.config.write_text("refresh_seconds = 1\n")
+        legacy = ('faded_color = "#B0B0B0"\ndim_color = "#505050"\n'
+                  'branch_color = "#7F91A8"\nbranch_faded_color = "#64748A"\n'
+                  'branch_dim_color = "#485568"\n')
+        self.context.config.write_text("refresh_seconds = 1\n" + legacy)
+        original = render_sidebar().replace("#A0A0A0", "#123456")
+        self.context.herdr_config.write_text(original)
+        modified = self.context.herdr_config.stat().st_mtime_ns
         reader, writer = socket.socketpair()
         self.addCleanup(reader.close)
         self.addCleanup(writer.close)
         checks = 0
-        reloads = []
+        reports = []
 
         def rpc(method, params=None):
             nonlocal checks
             if method == "plugin.list":
                 checks += 1
-                return {"plugins": [{"plugin_id": PLUGIN_ID, "enabled": checks < 3}]}
+                if checks == 2:
+                    self.context.config.write_text("refresh_seconds = 1\n" + legacy.replace("#B0B0B0", "ignored"))
+                return {"plugins": [{"plugin_id": PLUGIN_ID, "enabled": checks < 4}]}
             if method == "session.snapshot":
                 return {"snapshot": {"workspaces": [{"workspace_id": "w1", "label": "home"}]}}
-            if method == "server.reload_config":
-                reloads.append(method)
-            return {}
+            if method == "workspace.report_metadata":
+                reports.append(params)
+                return {}
+            self.fail(method)
 
         with patch.object(self.context, "subscribe", return_value=(reader, b'{"event":"workspace_updated"}\n')), \
-             patch.object(self.context, "rpc", side_effect=rpc), \
-             patch("plugin.sync_sidebar", side_effect=[False, True]):
+             patch.object(self.context, "rpc", side_effect=rpc):
             run(self.context)
-        self.assertEqual(reloads, ["server.reload_config"])
+        self.assertEqual(checks, 4)
+        self.assertTrue(reports)
+        self.assertEqual(self.context.herdr_config.read_text(), original)
+        self.assertEqual(self.context.herdr_config.stat().st_mtime_ns, modified)
+        self.assertFalse(list(self.context.herdr_config.parent.glob("herdr.toml.before-*")))
 
     def test_lock_prevents_duplicate_daemons(self):
         import fcntl

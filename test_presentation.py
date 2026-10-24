@@ -5,66 +5,19 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from presentation import branch_name, render_sidebar, sync_sidebar, workspace_branches
-from recency import Settings
+from presentation import branch_name, render_sidebar, workspace_branches
+from recency import Settings, TOKENS, Tracker
 
 
 class PresentationTests(unittest.TestCase):
-    def test_branch_colors_are_independent_and_optional(self):
-        settings = Settings(branch_color="#7F91A8", branch_faded_color="#64748A", branch_dim_color="#485568")
-        rows = tomllib.loads(render_sidebar(settings))["ui"]["sidebar"]["spaces"]["rows"]
-        self.assertEqual([item["fg"] for item in rows[1] if isinstance(item, dict)],
-                         ["#7F91A8", "#64748A", "#485568"])
-        self.assertEqual([item["fg"] for item in rows[0] if isinstance(item, dict)],
-                         ["#A0A0A0", "#606060"])
-        for field in ("branch_color", "branch_faded_color", "branch_dim_color"):
-            with self.assertRaises(ValueError):
-                Settings(**{field: "red"})
-        self.assertIn('"$recency_branch_fresh"', render_sidebar(Settings()))
-
-    def test_colors_update_names_and_branches_without_other_config_changes(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "config.toml"
-            prefix = '[theme]\nname = "terminal"\n\n# user comment\n'
-            suffix = '\n[ui.sidebar.agents]\nrows = [["agent"]]\n'
-            path.write_text(prefix + render_sidebar(Settings()) + suffix)
-            settings = Settings(faded_color="#606060", dim_color="#445566")
-            self.assertTrue(sync_sidebar(path, settings))
-            contents = path.read_text()
-            self.assertTrue(contents.startswith(prefix))
-            self.assertTrue(contents.endswith(suffix))
-            rows = tomllib.loads(contents)["ui"]["sidebar"]["spaces"]["rows"]
-            for row in rows:
-                styles = [item for item in row if isinstance(item, dict)]
-                self.assertEqual([item["fg"] for item in styles], ["#606060", "#445566"])
-            modified = path.stat().st_mtime_ns
-            sync_sidebar(path, settings)
-            self.assertEqual(path.stat().st_mtime_ns, modified)
-
-    def test_unmanaged_and_invalid_config_are_never_overwritten(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "config.toml"
-            for content in ['[ui]\naccent = "cyan"\n', '[ui]\ninvalid = [\n']:
-                path.write_text(content)
-                if "invalid" in content:
-                    with self.assertRaises(ValueError):
-                        sync_sidebar(path, Settings())
-                else:
-                    self.assertFalse(sync_sidebar(path, Settings()))
-                self.assertEqual(path.read_text(), content)
-
-    def test_color_sync_keeps_symlink_and_private_file_permissions(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            target = root / "actual.toml"
-            target.write_text(render_sidebar(Settings()))
-            target.chmod(0o600)
-            link = root / "config.toml"
-            link.symlink_to(target)
-            sync_sidebar(link, Settings(faded_color="#BBBBBB"))
-            self.assertTrue(link.is_symlink())
-            self.assertEqual(target.stat().st_mode & 0o777, 0o600)
-            self.assertEqual((root / "actual.toml.before-space-recency-colors").stat().st_mode & 0o777, 0o600)
+    def test_template_has_all_state_tokens_and_default_colors(self):
+        rows = tomllib.loads(render_sidebar())["ui"]["sidebar"]["spaces"]["rows"]
+        tokens = {item["token"] if isinstance(item, dict) else item for row in rows for item in row}
+        self.assertTrue({"$" + token for token in TOKENS} <= tokens)
+        self.assertTrue({"state_icon", "git_status"} <= tokens)
+        for row in rows:
+            self.assertEqual([item["fg"] for item in row if isinstance(item, dict)],
+                             ["#A0A0A0", "#606060"])
 
     def test_branch_from_git_and_non_repository(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -122,6 +75,68 @@ class PresentationTests(unittest.TestCase):
                 result = workspace_branches([workspace, parent], Path(temporary) / "missing.json")
             self.assertIsNone(result[0]["branch"])
             self.assertIsNotNone(result[1]["branch"])
+
+    def test_grouped_worktree_name_matches_native_and_preserves_custom_names(self):
+        from unittest.mock import patch
+        from plugin import normalize
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        child = {"workspace_id": "w1", "label": "checkout", "worktree": {
+            "repo_key": "/repo/.git", "checkout_path": "/repo/checkout", "is_linked_worktree": True,
+        }}
+        parent = {"workspace_id": "w0", "label": "repo", "worktree": {
+            "repo_key": "/repo/.git", "checkout_path": "/repo", "is_linked_worktree": False,
+        }}
+        cases = [
+            (None, "checkout", "worktree/feature", "feature"),
+            (None, "checkout", "topic/feature", "topic/feature"),
+            ("review", "review", "worktree/feature", "review"),
+            ("checkout", "checkout", "worktree/feature", "checkout"),
+            (None, "just-renamed", "worktree/feature", "just-renamed"),
+            (None, "checkout", None, "checkout"),
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary) / "session.json"
+            for custom_name, label, branch, expected in cases:
+                with self.subTest(custom_name=custom_name, label=label, branch=branch):
+                    session.write_text(json.dumps({"workspaces": [{
+                        "id": "w1", "custom_name": custom_name, "identity_cwd": "/repo/checkout",
+                    }]}))
+                    with patch("presentation.branch_name", return_value=branch):
+                        result = workspace_branches([{**child, "label": label}, parent], session)
+                    self.assertEqual(result[0]["label"], expected)
+                    self.assertEqual(child["label"], "checkout")  # No change to the source workspace.
+                    self.assertIsNone(result[0]["branch"])
+                    for hours, tier in [(0, "fresh"), (24, "faded"), (168, "stale")]:
+                        tokens = Tracker({"w1": 100}).update(result, 100 + hours * 3600, Settings())["w1"]
+                        self.assertEqual(tokens["recency_" + tier], expected)
+                        self.assertTrue(all(tokens["recency_branch_" + t] is None
+                                            for t in ("fresh", "faded", "stale")))
+                    context = SimpleNamespace(workspaces=lambda: result, report=Mock())
+                    normalize(context)
+                    self.assertEqual(context.report.call_args_list[0].args[1]["recency_fresh"], expected)
+
+    def test_unconfirmed_custom_name_and_ungrouped_worktree_keep_api_label(self):
+        from unittest.mock import patch
+        child = {"workspace_id": "w1", "label": "checkout", "worktree": {
+            "repo_key": "/repo/.git", "checkout_path": "/repo/checkout", "is_linked_worktree": True,
+        }}
+        parent = {"workspace_id": "w0", "label": "repo", "worktree": {
+            "repo_key": "/repo/.git", "checkout_path": "/repo", "is_linked_worktree": False,
+        }}
+        with tempfile.TemporaryDirectory() as temporary:
+            session = Path(temporary) / "session.json"
+            for contents in (None, {"workspaces": []}, {"workspaces": [{"id": "w1"}]}):
+                if contents is not None:
+                    session.write_text(json.dumps(contents))
+                with patch("presentation.branch_name", return_value="worktree/feature"):
+                    result = workspace_branches([child, parent], session)
+                self.assertEqual(result[0]["label"], "checkout")
+            session.write_text(json.dumps({"workspaces": [{"id": "w1", "custom_name": None}]}))
+            with patch("presentation.branch_name", return_value="worktree/feature"):
+                result = workspace_branches([child], session)
+            self.assertEqual(result[0]["label"], "checkout")
+            self.assertEqual(result[0]["branch"], "worktree/feature")
 
     def test_linked_worktree_without_open_parent_keeps_branch(self):
         from unittest.mock import patch

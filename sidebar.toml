@@ -1,8 +1,16 @@
-# >>> herdr-space-recency sidebar
-# Managed colors: configure Space and branch colors in the plugin config.toml.
+# $recency_* tokens are used by herdr-space-recency.
 [ui.sidebar.spaces]
 rows = [
-  ["state_icon", "$recency_fresh", { token = "$recency_faded", fg = "#A0A0A0" }, { token = "$recency_stale", fg = "#606060" }],
-  ["$recency_branch_fresh", { token = "$recency_branch_faded", fg = "#A0A0A0" }, { token = "$recency_branch_stale", fg = "#606060" }, "git_status"],
+  [
+    "state_icon",
+    "$recency_fresh",
+    { token = "$recency_faded", fg = "#A0A0A0" },
+    { token = "$recency_stale", fg = "#606060" },
+  ],
+  [
+    "$recency_branch_fresh",
+    { token = "$recency_branch_faded", fg = "#A0A0A0" },
+    { token = "$recency_branch_stale", fg = "#606060" },
+    "git_status",
+  ],
 ]
-# <<< herdr-space-recency sidebar

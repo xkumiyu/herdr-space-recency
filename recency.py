@@ -3,7 +3,6 @@
 import json
 import math
 import os
-import re
 import tomllib
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -17,21 +16,10 @@ class Settings:
     fade_after_hours: float = 24
     dim_after_hours: float = 168
     refresh_seconds: float = 60
-    faded_color: str = "#A0A0A0"
-    dim_color: str = "#606060"
-    branch_color: str = ""
-    branch_faded_color: str = ""
-    branch_dim_color: str = ""
 
     def __post_init__(self):
         for field in fields(self):
             value = getattr(self, field.name)
-            if field.name.endswith("_color"):
-                if field.name.startswith("branch_") and value == "":
-                    continue
-                if not isinstance(value, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
-                    raise ValueError(f"{field.name} must be a #RRGGBB color")
-                continue
             if isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or value <= 0:
                 raise ValueError(f"{field.name} must be a finite positive number")
         if self.fade_after_hours >= self.dim_after_hours:
@@ -46,6 +34,10 @@ class Settings:
                 values = tomllib.load(stream)
         except FileNotFoundError:
             return cls()
+        # Retired color keys are ignored so existing installations keep running.
+        for key in ("faded_color", "dim_color", "branch_color",
+                    "branch_faded_color", "branch_dim_color"):
+            values.pop(key, None)
         unknown = values.keys() - {field.name for field in fields(cls)}
         if unknown:
             raise ValueError(f"Unknown settings: {', '.join(sorted(unknown))}")
